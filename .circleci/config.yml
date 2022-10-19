@@ -89,12 +89,12 @@ workflows:
             - AWS Credentials
           filters:
             branches:
-              only: master
+              only: main
       - deploy:
           requires:
             - build
             - codeartifact_token
           filters:
             branches:
-              only: master
+              only: main
 
