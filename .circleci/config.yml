@@ -1,0 +1,100 @@
+# Java Gradle CircleCI 2.0 configuration file
+# See: https://circleci.com/docs/2.0/language-java/
+version: 2.1
+
+# Define a job to be invoked later in a workflow.
+# See: https://circleci.com/docs/2.0/configuration-reference/#jobs
+jobs:
+  build:
+    # Specify the execution environment. You can specify an image from Dockerhub or use one of our Convenience Images from CircleCI's Developer Hub.
+    # See: https://circleci.com/docs/2.0/configuration-reference/#docker-machine-macos-windows-executor
+    docker:
+      # specify the version you desire here
+      - image: azul/zulu-openjdk-alpine:11-latest
+    resource_class: small
+
+      # Specify service dependencies here if necessary
+      # CircleCI maintains a library of pre-built images
+      # documented at https://circleci.com/docs/2.0/circleci-images/
+      # - image: circleci/postgres:9.4
+
+    working_directory: ~/repo
+
+    environment:
+      # Customize the JVM maximum heap limit
+      JVM_OPTS: -Xmx3200m
+    # Add steps to the job
+    # See: https://circleci.com/docs/2.0/configuration-reference/#steps
+    steps:
+      - checkout
+
+      # Download and cache dependencies
+      - restore_cache:
+          keys:
+            - v1-dependencies-{{ checksum "build.gradle.kts" }}
+            # fallback to using the latest cache if no exact match is found
+            - v1-dependencies-
+
+      - run: ./gradlew dependencies
+
+      - save_cache:
+          paths:
+            - ~/.gradle
+          key: v1-dependencies-{{ checksum "build.gradle.kts" }}
+
+      # run tests!
+      - run: ./gradlew check
+      - store_test_results:
+          path: build/test-results/
+      # creates the jar
+      - run: ./gradlew assemble
+  codeartifact_token:
+    docker:
+      - image: amazon/aws-cli:2.8.3
+    resource_class: small
+    working_directory: ~/repo
+    steps:
+      - run: yum install -y tar gzip
+      - run: chmod +x ./circleci/aws_auth_token_cache.sh
+      - run: ./circleci/aws_auth_token_cache.sh
+      - run: ls        
+      - persist_to_workspace:
+          root: ~/repo
+          paths: 
+            - code_artifact_token.txt
+  deploy:
+    docker:
+      - image: azul/zulu-openjdk-alpine:11-latest
+    resource_class: small
+    working_directory: ~/repo
+    steps:
+      - attach_workspace:
+          at: /tmp/workspace
+      - checkout
+      - restore_cache:
+          keys:
+            - v1-dependencies-{{ checksum "build.gradle.kts" }}
+            # fallback to using the latest cache if no exact match is found
+            - v1-dependencies-
+      - run: |
+          export CODEARTIFACT_AUTH_TOKEN=`head -1 /tmp/workspace/code_artifact_token.txt`
+          ./gradlew publish
+workflows:
+  version: 2
+  workflow:
+    jobs:
+      - build
+      - codeartifact_token:
+          context:
+            - AWS Credentials
+          filters:
+            branches:
+              only: master
+      - deploy:
+          requires:
+            - build
+            - codeartifact_token
+          filters:
+            branches:
+              only: master
+
